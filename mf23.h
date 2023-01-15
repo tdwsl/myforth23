@@ -29,7 +29,13 @@ const char *bootStr = ""
 ": HEX 16 BASE ! ; "
 ": DECIMAL 10 BASE ! ; "
 ": CHAR PARSE-NAME DROP C@ ; "
-//": [CHAR] PARSE-NAME DROP C@ POSTPONE LITERAL ; IMMEDIATE "
+": [CHAR] CHAR LIT, ; IMMEDIATE "
+": CELL 4 ; "
+": CELL+ 4 + ; "
+": CELLS 4 * ; "
+": , HERE ! CELL ALLOT ; "
+": C, HERE C! 1 ALLOT ; "
+": VARIABLE CREATE CELL ALLOT ; "
 "";
 const char *strPtr;
 
@@ -468,6 +474,39 @@ void wCFind() {
     size += 4;
 }
 
+void wAddLit() {
+    dict[size++] = INS_PUSH;
+    *(uint32_t*)&dict[size] = stack[--sp];
+    size += 4;
+}
+
+void wCompile() {
+    wAddLit();
+    dict[size++] = INS_CALL;
+}
+
+void wAllot() {
+    size += stack[--sp];
+}
+
+void wCreate() {
+    getName();
+    addWord(dict+stringAddr);
+    dict[size++] = INS_PUSH;
+    *(uint32_t*)&dict[size] = size+4+3;
+    size += 4;
+    endWord();
+}
+
+void wConstant() {
+    getName();
+    addWord(dict+stringAddr);
+    dict[size++] = INS_PUSH;
+    *(uint32_t*)&dict[size] = stack[--sp];
+    size += 4;
+    endWord();
+}
+
 void run() {
     int i;
     uint32_t addr;
@@ -544,6 +583,11 @@ void init() {
     addFunction("EXIT", wExit); wImmediate();
     addFunction("'", wFind);
     addFunction("[']", wCFind); wImmediate();
+    addFunction("LIT,", wAddLit);
+    addFunction("COMPILE,", wCompile);
+    addFunction("ALLOT", wAllot);
+    addFunction("CREATE", wCreate);
+    addFunction("CONSTANT", wConstant);
     /*getNextC = strGetNextC;
     strPtr = bootStr;
     getNextC = defGetNextC;
