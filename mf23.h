@@ -26,6 +26,10 @@ const char *bootStr = ""
 ": CR 10 EMIT ; "
 ": SPACE 32 EMIT ; "
 ": BASE 0 ; " // BASE_INDEX
+": HEX 16 BASE ! ; "
+": DECIMAL 10 BASE ! ; "
+": CHAR PARSE-NAME DROP C@ ; "
+//": [CHAR] PARSE-NAME DROP C@ POSTPONE LITERAL ; IMMEDIATE "
 "";
 const char *strPtr;
 
@@ -54,8 +58,8 @@ unsigned char initDict[] = {
     '2','/',0,0,INS_SHR,INS_RET,6,0,
     '!',0,0,INS_SET,INS_RET,5,0,
     '@',0,0,INS_GET,INS_RET,5,0,
-    'C','!',0,0,INS_SET,INS_RET,6,0,
-    'C','@',0,0,INS_GET,INS_RET,6,0,
+    'C','!',0,0,INS_SETC,INS_RET,6,0,
+    'C','@',0,0,INS_GETC,INS_RET,6,0,
     '=',0,0,INS_SUB,INS_ZEQ,INS_RET,6,0,
     '>','=',0,0,INS_SUB,INS_PUSH,0,0,0,8,INS_AND,INS_ZEQ,INS_RET,13,0,
     '>',0,0,INS_DEC,INS_SUB,INS_PUSH,0,0,0,8,INS_AND,INS_ZEQ,INS_RET,13,0,
@@ -69,10 +73,11 @@ unsigned char initDict[] = {
                         INS_SWAP,INS_PICK,INS_SWAP,INS_RET,19,0,
     'R','O','T',0,0,INS_RPUSH,INS_SWAP,INS_RPOP,INS_SWAP,INS_RET,10,0,
     '2','D','R','O','P',0,0,INS_DROP,INS_DROP,INS_RET,10,0,
+    'E','X','E','C','U','T','E',0,0,INS_JMP,10,0,
     255,
 };
 unsigned char dict[16*1024*1024];
-uint32_t size = 0, lastWord = 0;
+uint32_t size = 0, lastWord = 0, oldSize;
 
 uint32_t rstack[256];
 uint32_t stack[256];
@@ -90,7 +95,7 @@ char defGetNextC() {
     return fgetc(stdin);
 }
 
-char bootGetNextC() {
+char strGetNextC() {
     if(*strPtr) return *(strPtr++); else return 0;
 }
 
@@ -260,41 +265,14 @@ void wPrint() {
 }
 
 void wColon() {
-    uint32_t addr;
-    uint32_t old = size;
-    int32_t n;
-
     if(!getName()) { printf("expect identifier after :\n"); return; }
+    oldSize = size;
     addWord(dict+stringAddr);
     compile = 1;
+}
 
-    while(getName()) {
-        if(!strcmp(dict+stringAddr, ";")) break;
-
-        addr = findWord(dict+stringAddr);
-
-        if(addr) {
-            if(dict[addr-1]) runAddr(addr);
-            else {
-                dict[size++] = INS_PUSH;
-                *(uint32_t*)&dict[size] = addr;
-                size += 4;
-                dict[size++] = INS_CALL;
-            }
-
-        } else if(number(dict+stringAddr, &n)) {
-            dict[size++] = INS_PUSH;
-            *(int32_t*)&dict[size] = n;
-            size += 4;
-
-        } else {
-            printf("%s ?\ncancelled :\n", dict+stringAddr);
-            compile = 0;
-            size = old;
-            return;
-        }
-    }
-
+void wSemi() {
+    if(!compile) { printf("expect : before ;\n"); return; }
     compile = 0;
     endWord();
 }
@@ -468,6 +446,28 @@ void wQuote() {
     }
 }
 
+void wExit() {
+    if(compile)
+        dict[size++] = INS_RET;
+}
+
+void wFind() {
+    getName();
+    stack[sp] = findWord(dict+stringAddr);
+    if(!stack[sp]) { printf("%s ?\n", dict+stringAddr); return; }
+    sp++;
+}
+
+void wCFind() {
+    uint32_t i;
+    getName();
+    i = findWord(dict+stringAddr);
+    if(!i) { printf("%s ?\n", dict+stringAddr); return; }
+    dict[size++] = INS_PUSH;
+    *(uint32_t*)&dict[size] = i;
+    size += 4;
+}
+
 void run() {
     int i;
     uint32_t addr;
@@ -475,10 +475,43 @@ void run() {
 
     while(getName()) {
         addr = findWord(dict+stringAddr);
-        if(addr) runAddr(addr);
-        else if(number(dict+stringAddr, &n)) stack[sp++] = n;
-        else printf("%s ?\n", dict+stringAddr);
+
+        if(compile) {
+            if(addr) {
+                if(dict[addr-1]) runAddr(addr);
+                else {
+                    dict[size++] = INS_PUSH;
+                    *(uint32_t*)&dict[size] = addr;
+                    size += 4;
+                    dict[size++] = INS_CALL;
+                }
+
+            } else if(number(dict+stringAddr, &n)) {
+                dict[size++] = INS_PUSH;
+                *(int32_t*)&dict[size] = n;
+                size += 4;
+
+            } else {
+                printf("%s ?\ncancelled :\n", dict+stringAddr);
+                compile = 0;
+                size = oldSize;
+            }
+
+        } else {
+            if(addr) runAddr(addr);
+            else if(number(dict+stringAddr, &n)) stack[sp++] = n;
+            else printf("%s ?\n", dict+stringAddr);
+        }
     }
+}
+
+void runStr(const char *s) {
+    char (*old)();
+    strPtr = s;
+    old = getNextC;
+    getNextC = strGetNextC;
+    run();
+    getNextC = old;
 }
 
 void init() {
@@ -488,6 +521,7 @@ void init() {
     addFunction("EMIT", wEmit);
     addFunction(".", wPrint);
     addFunction(":", wColon);
+    addFunction(";", wSemi); wImmediate();
     addFunction("BYE", wBye);
     addFunction("IMMEDIATE", wImmediate);
     addFunction("HERE", wHere);
@@ -507,10 +541,15 @@ void init() {
     addFunction("PARSE-NAME", wParseName);
     addFunction(".\"", wQuote); wImmediate();
     addFunction("S\"", wSQuote); wImmediate();
-    getNextC = bootGetNextC;
+    addFunction("EXIT", wExit); wImmediate();
+    addFunction("'", wFind);
+    addFunction("[']", wCFind); wImmediate();
+    /*getNextC = strGetNextC;
     strPtr = bootStr;
-    run();
     getNextC = defGetNextC;
+    run();*/
+    getNextC = defGetNextC;
+    runStr(bootStr);
     typeAddr = findWord("TYPE");
 }
 
