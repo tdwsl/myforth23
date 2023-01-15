@@ -7,7 +7,7 @@
 #include <string.h>
 
 enum {
-    INS_PUSH=0, INS_CALLC,
+    INS_PUSH=0, INS_CALLC, INS_BRK,
     INS_ADD, INS_SUB, INS_DIV, INS_MUL,
     INS_AND, INS_OR, INS_XOR, INS_INV,
     INS_INC, INS_DEC, INS_SHL, INS_SHR, INS_ZEQ,
@@ -16,12 +16,22 @@ enum {
     INS_SET, INS_GET, INS_SETC, INS_GETC,
 };
 
-#define DICT_START 4
+#define BRK_INDEX 4
+#define DICT_START 5
 #define BASE_INDEX 0
 #define STRING_START 14*1024*1024
 
+const char *bootStr = ""
+": TYPE BEGIN DUP WHILE 1- SWAP DUP C@ EMIT 1+ SWAP REPEAT 2DROP ; "
+": CR 10 EMIT ; "
+": SPACE 32 EMIT ; "
+": BASE 0 ; " // BASE_INDEX
+"";
+const char *strPtr;
+
 unsigned char initDict[] = {
     10,0,0,0,
+    INS_BRK,
     '+',0,0,INS_ADD,INS_RET,5,0,
     '-',0,0,INS_SUB,INS_RET,5,0,
     '*',0,0,INS_MUL,INS_RET,5,0,
@@ -58,6 +68,7 @@ unsigned char initDict[] = {
     '2','O','V','E','R',0,0,INS_PUSH,4,0,0,0,INS_DUP,INS_DEC,INS_PICK,
                         INS_SWAP,INS_PICK,INS_SWAP,INS_RET,19,0,
     'R','O','T',0,0,INS_RPUSH,INS_SWAP,INS_RPOP,INS_SWAP,INS_RET,10,0,
+    '2','D','R','O','P',0,0,INS_DROP,INS_DROP,INS_RET,10,0,
     255,
 };
 unsigned char dict[16*1024*1024];
@@ -66,15 +77,21 @@ uint32_t size = 0, lastWord = 0;
 uint32_t rstack[256];
 uint32_t stack[256];
 unsigned char sp = 0, rsp = 0;
+char compile = 0;
 
 char (*getNextC)();
 void (*functions[3000])();
 uint32_t nfunctions = 0;
 
 uint32_t stringAddr = STRING_START;
+int typeAddr;
 
 char defGetNextC() {
     return fgetc(stdin);
+}
+
+char bootGetNextC() {
+    if(*strPtr) return *(strPtr++); else return 0;
 }
 
 void addWord(const char *s) {
@@ -137,6 +154,7 @@ uint32_t findWord(const char *s) {
 }
 
 void runAddr(uint32_t pc) {
+    rstack[rsp++] = BRK_INDEX;
     for(;;) {
         switch(dict[pc++]) {
         case INS_PUSH:
@@ -146,6 +164,7 @@ void runAddr(uint32_t pc) {
         case INS_CALLC:
             functions[stack[--sp]]();
             break;
+        case INS_BRK: return;
         case INS_ADD: stack[sp-2] += stack[sp-1]; sp--; break;
         case INS_SUB: stack[sp-2] -= stack[sp-1]; sp--; break;
         case INS_DIV:
@@ -179,7 +198,6 @@ void runAddr(uint32_t pc) {
         case INS_RPOP: stack[sp++] = rstack[--rsp]; break;
         case INS_CALL: rstack[rsp++] = pc; pc = stack[--sp]; break;
         case INS_RET:
-            if(!rsp) return;
             pc = rstack[--rsp];
             break;
         case INS_JMP: pc = stack[--sp]; break;
@@ -248,6 +266,7 @@ void wColon() {
 
     if(!getName()) { printf("expect identifier after :\n"); return; }
     addWord(dict+stringAddr);
+    compile = 1;
 
     while(getName()) {
         if(!strcmp(dict+stringAddr, ";")) break;
@@ -270,11 +289,13 @@ void wColon() {
 
         } else {
             printf("%s ?\ncancelled :\n", dict+stringAddr);
+            compile = 0;
             size = old;
             return;
         }
     }
 
+    compile = 0;
     endWord();
 }
 
@@ -298,7 +319,7 @@ void wWords() {
     for(;;) {
         j = i-*(uint16_t*)&dict[i];
         x += strlen(dict+j)+1;
-        if(x >= 80) { printf("\n"); x = 0; }
+        if(x >= 80) { printf("\n"); x = strlen(dict+j)+1; }
         printf("%s ", dict+j);
         if(j == DICT_START) break;
         i = j-2;
@@ -307,22 +328,107 @@ void wWords() {
 }
 
 void wIf() {
+    rsp++;
+    rstack[rsp-1] = rstack[rsp-2];
     dict[size++] = INS_PUSH;
-    stack[sp++] = size;
+    rstack[rsp-2] = size;
     size += 4;
     dict[size++] = INS_JZ;
 }
 
 void wThen() {
-    *(uint32_t*)&dict[stack[--sp]] = size;
+    *(uint32_t*)&dict[rstack[rsp-2]] = size;
+    rstack[rsp-2] = rstack[rsp-1];
+    rsp--;
 }
 
 void wElse() {
-    *(uint32_t*)&dict[stack[sp-1]] = size+6;
+    *(uint32_t*)&dict[rstack[rsp-2]] = size+6;
     dict[size++] = INS_PUSH;
-    stack[sp-1] = size;
+    rstack[rsp-2] = size;
     size += 4;
     dict[size++] = INS_JMP;
+}
+
+void wBegin() {
+    rsp++;
+    rstack[rsp-1] = rstack[rsp-2];
+    rstack[rsp-2] = size;
+}
+
+void wUntil() {
+    dict[size++] = INS_PUSH;
+    *(uint32_t*)&dict[size] = rstack[rsp-2];
+    size += 4;
+    dict[size++] = INS_JZ;
+    rstack[rsp-2] = rstack[rsp-1];
+    rsp--;
+}
+
+void wAgain() {
+    dict[size++] = INS_PUSH;
+    *(uint32_t*)&dict[size] = rstack[rsp-2];
+    size += 4;
+    dict[size++] = INS_JMP;
+    rstack[rsp-2] = rstack[rsp-1];
+    rsp--;
+}
+
+void wWhile() {
+    rsp++;
+    rstack[rsp-1] = rstack[rsp-2];
+    dict[size++] = INS_PUSH;
+    rstack[rsp-2] = size;
+    size += 4;
+    dict[size++] = INS_JZ;
+}
+
+void wRepeat() {
+    dict[size++] = INS_PUSH;
+    *(uint32_t*)&dict[size] = rstack[rsp-3];
+    size += 4;
+    dict[size++] = INS_JMP;
+    *(uint32_t*)&dict[rstack[rsp-2]] = size;
+    rstack[rsp-3] = rstack[rsp-1];
+    rsp -= 2;
+}
+
+void wDo() {
+    dict[size++] = INS_RPUSH;
+    dict[size++] = INS_RPUSH;
+    rsp++;
+    rstack[rsp-1] = rstack[rsp-2];
+    rstack[rsp-2] = size;
+}
+
+void wLoop() {
+    dict[size++] = INS_RPOP;
+    dict[size++] = INS_RPOP;
+    dict[size++] = INS_INC;
+    dict[size++] = INS_OVER;
+    dict[size++] = INS_OVER;
+    dict[size++] = INS_RPUSH;
+    dict[size++] = INS_RPUSH;
+    dict[size++] = INS_SUB;
+    dict[size++] = INS_ZEQ;
+    dict[size++] = INS_PUSH;
+    *(uint32_t*)&dict[size] = rstack[rsp-2];
+    size += 4;
+    dict[size++] = INS_JZ;
+    dict[size++] = INS_RPOP;
+    dict[size++] = INS_RPOP;
+    dict[size++] = INS_DROP;
+    dict[size++] = INS_DROP;
+    rstack[rsp-2] = rstack[rsp-1];
+    rsp--;
+}
+
+void wI() {
+    stack[sp++] = rstack[rsp-3];
+}
+
+void wJ() {
+    stack[sp++] = rstack[rsp-5];
 }
 
 void wParseName() {
@@ -331,42 +437,34 @@ void wParseName() {
     stack[sp++] = strlen(dict+stringAddr);
 }
 
-void wQuote() {
-    getNext('"', '"');
-    printf("%s", dict+stringAddr);
-}
-
 void wSQuote() {
     getNext('"', '"');
-    stack[sp++] = stringAddr;
-    stack[sp++] = strlen(dict+stringAddr);
+    if(compile) {
+        dict[size++] = INS_PUSH;
+        *(uint32_t*)&dict[size] = stringAddr;
+        size += 4;
+        dict[size++] = INS_PUSH;
+        *(uint32_t*)&dict[size] = strlen(dict+stringAddr);
+        size += 4;
+    } else {
+        stack[sp++] = stringAddr;
+        stack[sp++] = strlen(dict+stringAddr);
+    }
     stringAddr += strlen(dict+stringAddr);
 }
 
-void wType() {
-    while(stack[sp-1]--) printf("%c", dict[stack[sp-2]++]);
-    sp -= 2;
-}
-
-void init() {
-    for(size = 0; initDict[size] != 255; size++) dict[size] = initDict[size];
-    lastWord = size - 2;
-    getNextC = defGetNextC;
-    stringAddr = STRING_START;
-    addFunction("EMIT", wEmit);
-    addFunction(".", wPrint);
-    addFunction(":", wColon);
-    addFunction("BYE", wBye);
-    addFunction("IMMEDIATE", wImmediate);
-    addFunction("HERE", wHere);
-    addFunction("WORDS", wWords);
-    addFunction("IF", wIf); wImmediate();
-    addFunction("ELSE", wElse); wImmediate();
-    addFunction("THEN", wThen); wImmediate();
-    addFunction("PARSE-NAME", wParseName);
-    addFunction(".\"", wQuote); wImmediate();
-    addFunction("S\"", wSQuote); wImmediate();
-    addFunction("TYPE", wType);
+void wQuote() {
+    if(compile) {
+        wSQuote();
+        dict[size++] = INS_PUSH;
+        *(uint32_t*)&dict[size] = typeAddr;
+        dict[size++] = INS_CALL;
+    } else {
+        getNext('"', '"');
+        stack[sp++] = stringAddr;
+        stack[sp++] = strlen(dict+stringAddr);
+        runAddr(typeAddr);
+    }
 }
 
 void run() {
@@ -380,6 +478,39 @@ void run() {
         else if(number(dict+stringAddr, &n)) stack[sp++] = n;
         else printf("%s ?\n", dict+stringAddr);
     }
+}
+
+void init() {
+    for(size = 0; initDict[size] != 255; size++) dict[size] = initDict[size];
+    lastWord = size - 2;
+    stringAddr = STRING_START;
+    addFunction("EMIT", wEmit);
+    addFunction(".", wPrint);
+    addFunction(":", wColon);
+    addFunction("BYE", wBye);
+    addFunction("IMMEDIATE", wImmediate);
+    addFunction("HERE", wHere);
+    addFunction("WORDS", wWords);
+    addFunction("IF", wIf); wImmediate();
+    addFunction("ELSE", wElse); wImmediate();
+    addFunction("THEN", wThen); wImmediate();
+    addFunction("BEGIN", wBegin); wImmediate();
+    addFunction("UNTIL", wUntil); wImmediate();
+    addFunction("AGAIN", wAgain); wImmediate();
+    addFunction("WHILE", wWhile); wImmediate();
+    addFunction("REPEAT", wRepeat); wImmediate();
+    addFunction("DO", wDo); wImmediate();
+    addFunction("LOOP", wLoop); wImmediate();
+    addFunction("I", wI);
+    addFunction("J", wJ);
+    addFunction("PARSE-NAME", wParseName);
+    addFunction(".\"", wQuote); wImmediate();
+    addFunction("S\"", wSQuote); wImmediate();
+    getNextC = bootGetNextC;
+    strPtr = bootStr;
+    run();
+    getNextC = defGetNextC;
+    typeAddr = findWord("TYPE");
 }
 
 #endif
