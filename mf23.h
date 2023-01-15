@@ -84,7 +84,7 @@ void (*functions[3000])();
 uint32_t nfunctions = 0;
 
 uint32_t stringAddr = STRING_START;
-int typeAddr;
+uint32_t typeAddr;
 
 char defGetNextC() {
     return fgetc(stdin);
@@ -458,6 +458,7 @@ void wQuote() {
         wSQuote();
         dict[size++] = INS_PUSH;
         *(uint32_t*)&dict[size] = typeAddr;
+        size += 4;
         dict[size++] = INS_CALL;
     } else {
         getNext('"', '"');
