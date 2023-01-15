@@ -46,13 +46,14 @@ const char *bootStr = ""
 ": , HERE ! CELL ALLOT ; "
 ": C, HERE C! 1 ALLOT ; "
 ": VARIABLE CREATE CELL ALLOT ; "
+": ['] ' LIT, ; IMMEDIATE "
 ": [COMPILE] ' LIT, ['] COMPILE, COMPILE, ; IMMEDIATE "
 ": (DO) R> ROT ROT >R >R >R ; "
 ": DO [COMPILE] (DO) R> 0 >R HERE >R >R ; IMMEDIATE "
 ": (LOOP) R> R> R> 1+ 2DUP >R >R = SWAP >R ; "
 ": (END-LOOP) R> R> R> 2DROP >R ; "
-": LOOP [COMPILE] (LOOP) R> R> LIT, >R JZ, "
-"  >R BEGIN DUP WHILE 1- HERE >R ! REPEAT DROP "
+": LOOP [COMPILE] (LOOP) R> R> LIT, JZ, "
+"  R> BEGIN DUP WHILE 1- HERE R> ! REPEAT DROP >R "
 "  [COMPILE] (END-LOOP) ; IMMEDIATE "
 ": LEAVE R> R> R> 1+ HERE 1+ SWAP >R >R >R >R 0 LIT, JMP, ; IMMEDIATE "
 "";
@@ -87,6 +88,7 @@ unsigned char initDict[] = {
     '@',0,0,INS_GET,INS_RET,5,0,
     'C','!',0,0,INS_SETC,INS_RET,6,0,
     'C','@',0,0,INS_GETC,INS_RET,6,0,
+    '0','<','>',0,0,INS_ZEQ,INS_ZEQ,INS_RET,8,0,
     '=',0,0,INS_SUB,INS_ZEQ,INS_RET,6,0,
     '>','=',0,0,INS_SUB,INS_PUSH,0,0,0,8,INS_AND,INS_ZEQ,INS_RET,13,0,
     '>',0,0,INS_DEC,INS_SUB,INS_PUSH,0,0,0,8,INS_AND,INS_ZEQ,INS_RET,13,0,
@@ -111,6 +113,8 @@ uint32_t stack[256];
 unsigned char sp = 0, rsp = 0;
 char compile = 0;
 
+FILE *mfFp;
+
 char (*getNextC)();
 void (*functions[3000])();
 uint32_t nfunctions = 0;
@@ -118,12 +122,18 @@ uint32_t nfunctions = 0;
 uint32_t stringAddr = STRING_START;
 uint32_t typeAddr;
 
+char trace = 0;
+
 char defGetNextC() {
     return fgetc(stdin);
 }
 
 char strGetNextC() {
     if(*strPtr) return *(strPtr++); else return 0;
+}
+
+char fGetNextC() {
+    if(feof(mfFp)) return 0; else return fgetc(mfFp);
 }
 
 void addWord(const char *s) {
@@ -187,7 +197,7 @@ uint32_t findWord(const char *s) {
 
 uint32_t findNext(const char *s) {
     uint32_t i, j, o;
-    o = lastWord;
+    o = lastWord+2;
     i = lastWord;
     for(;;) {
         j = i-*(uint16_t*)&dict[i];
@@ -215,8 +225,10 @@ const char *findName(uint32_t addr) {
 }
 
 void runAddr(uint32_t pc) {
+    const char *s;
     rstack[rsp++] = BRK_INDEX;
     for(;;) {
+        if(trace && (s = findName(pc))) printf("%X>%s ", rstack[rsp-1], s);
         switch(dict[pc++]) {
         case INS_PUSH:
             stack[sp++] = *(uint32_t*)&dict[pc];
@@ -436,9 +448,8 @@ void wJ() {
 }
 
 void wSee() {
-    uint32_t addr, i, e, p;
+    uint32_t addr, a, e, i, n, p;
     int x;
-    char wasP;
     char buf[40];
     char buf1[40];
 
@@ -448,37 +459,34 @@ void wSee() {
     e = findNext(dict+stringAddr)-2;
 
     x = 0;
-    wasP = 0;
     printf(": %s\n", dict+stringAddr);
+    printf("%.8X ", addr);
     for(i = addr; i < e; i++) {
+        a = i;
         switch(dict[i]) {
         case INS_PUSH:
-            //sprintf(buf, "%d ", *(int32_t*)&dict[i+1]);
-            p = *(int32_t*)&dict[i+1];
+            n = *(uint32_t*)&dict[i+1];
             i += 4;
-            wasP = 1;
-            continue;
-        case INS_CALL:
-            if(wasP) {
-                wasP = 0;
-                sprintf(buf, "%s ", findName(p));
-                break;
+            if(dict[i+1] == INS_CALL) {
+                sprintf(buf, "%s ", findName(n));
+                i++;
+            } else {
+                sprintf(buf, "%d ", n);
             }
+            break;
         default:
             sprintf(buf, "(%s) ", insStrs[dict[i]]);
             break;
         }
-        if(wasP) {
-            sprintf(buf1, "%d %s ", p, buf);
-            strcpy(buf, buf1);
-            wasP = 0;
-        }
         x += strlen(buf);
-        if(x >= 80) { printf("\n"); x = strlen(buf); }
+        if(x >= 80-9) {
+            printf("\n%.8X ", a);
+            x = strlen(buf);
+        }
         printf("%s", buf);
     }
 
-    if(x) printf("\n...\n");
+    if(x) printf("\n");
     if(dict[addr-1]) printf("IMMEDIATE\n");
 }
 
@@ -531,16 +539,6 @@ void wFind() {
     sp++;
 }
 
-void wCFind() {
-    uint32_t i;
-    getName();
-    i = findWord(dict+stringAddr);
-    if(!i) { printf("%s ?\n", dict+stringAddr); return; }
-    dict[size++] = INS_PUSH;
-    *(uint32_t*)&dict[size] = i;
-    size += 4;
-}
-
 void wAddLit() {
     dict[size++] = INS_PUSH;
     *(uint32_t*)&dict[size] = stack[--sp];
@@ -582,6 +580,18 @@ void wJmp() {
 
 void wJz() {
     dict[size++] = INS_JZ;
+}
+
+void wDepth() {
+    stack[sp] = sp++;
+}
+
+void wTraceOn() {
+    trace = 1;
+}
+
+void wTraceSet() {
+    trace = stack[--sp];
 }
 
 void run() {
@@ -630,6 +640,17 @@ void runStr(const char *s) {
     getNextC = old;
 }
 
+void runFile(const char *filename) {
+    char (*old)();
+    mfFp = fopen(filename, "r");
+    if(!mfFp) { printf("failed to open %s\n", filename); return; }
+    old = getNextC;
+    getNextC = fGetNextC;
+    run();
+    getNextC = old;
+    fclose(mfFp);
+}
+
 void init() {
     for(size = 0; initDict[size] != 255; size++) dict[size] = initDict[size];
     lastWord = size - 2;
@@ -657,7 +678,6 @@ void init() {
     addFunction("S\"", wSQuote); wImmediate();
     addFunction("EXIT", wExit); wImmediate();
     addFunction("'", wFind);
-    addFunction("[']", wCFind); wImmediate();
     addFunction("LIT,", wAddLit);
     addFunction("COMPILE,", wCompile);
     addFunction("ALLOT", wAllot);
@@ -666,6 +686,8 @@ void init() {
     addFunction("JMP,", wJmp);
     addFunction("JZ,", wJz);
     addFunction("SEE", wSee);
+    addFunction("DEPTH", wDepth);
+    addFunction("TRACE!", wTraceSet);
     /*getNextC = strGetNextC;
     strPtr = bootStr;
     getNextC = defGetNextC;
