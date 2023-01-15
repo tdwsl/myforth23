@@ -32,6 +32,16 @@ const char *insStrs[] = {
 #define STRING_START 14*1024*1024
 
 const char *bootStr = ""
+": ['] ' LIT, ; IMMEDIATE "
+": [COMPILE] ' LIT, ['] COMPILE, COMPILE, ; IMMEDIATE "
+": IF R> HERE 1+ >R >R 0 LIT, JZ, ; IMMEDIATE "
+": THEN R> HERE R> ! >R ; IMMEDIATE "
+": ELSE R> HERE 6 + R> ! HERE 1+ >R >R 0 LIT, JMP, ; IMMEDIATE "
+": BEGIN R> HERE >R >R ; IMMEDIATE "
+": UNTIL R> R> LIT, JZ, >R ; IMMEDIATE "
+": AGAIN R> R> LIT, JMP, >R ; IMMEDIATE "
+": WHILE R> HERE 1+ >R >R 0 LIT, JZ, ; IMMEDIATE "
+": REPEAT R> HERE 6 + R> ! R> LIT, JMP, >R ; IMMEDIATE "
 ": TYPE BEGIN DUP WHILE 1- SWAP DUP C@ EMIT 1+ SWAP REPEAT 2DROP ; "
 ": CR 10 EMIT ; "
 ": SPACE 32 EMIT ; "
@@ -40,14 +50,20 @@ const char *bootStr = ""
 ": DECIMAL 10 BASE ! ; "
 ": CHAR PARSE-NAME DROP C@ ; "
 ": [CHAR] CHAR LIT, ; IMMEDIATE "
+": PARSE DUP PARSE-RANGE ; "
+": S\" [CHAR] \" PARSE SAVE-STRING "
+"  COMPILE? IF SWAP LIT, LIT, THEN ; IMMEDIATE "
+": .\" [CHAR] \" PARSE "
+"  COMPILE? IF SAVE-STRING SWAP LIT, LIT, [COMPILE] TYPE "
+"  ELSE TYPE THEN ; IMMEDIATE "
+": \\ 10 SKIP ; "
+": ( [CHAR] ) SKIP ; "
 ": CELL 4 ; "
 ": CELL+ 4 + ; "
 ": CELLS 4 * ; "
 ": , HERE ! CELL ALLOT ; "
 ": C, HERE C! 1 ALLOT ; "
 ": VARIABLE CREATE CELL ALLOT ; "
-": ['] ' LIT, ; IMMEDIATE "
-": [COMPILE] ' LIT, ['] COMPILE, COMPILE, ; IMMEDIATE "
 ": (DO) R> ROT ROT >R >R >R ; "
 ": DO [COMPILE] (DO) R> 0 >R HERE >R >R ; IMMEDIATE "
 ": (LOOP) R> R> R> 1+ 2DUP >R >R = SWAP >R ; "
@@ -373,72 +389,6 @@ void wWords() {
     if(x) printf("\n");
 }
 
-void wIf() {
-    rsp++;
-    rstack[rsp-1] = rstack[rsp-2];
-    dict[size++] = INS_PUSH;
-    rstack[rsp-2] = size;
-    size += 4;
-    dict[size++] = INS_JZ;
-}
-
-void wThen() {
-    *(uint32_t*)&dict[rstack[rsp-2]] = size;
-    rstack[rsp-2] = rstack[rsp-1];
-    rsp--;
-}
-
-void wElse() {
-    *(uint32_t*)&dict[rstack[rsp-2]] = size+6;
-    dict[size++] = INS_PUSH;
-    rstack[rsp-2] = size;
-    size += 4;
-    dict[size++] = INS_JMP;
-}
-
-void wBegin() {
-    rsp++;
-    rstack[rsp-1] = rstack[rsp-2];
-    rstack[rsp-2] = size;
-}
-
-void wUntil() {
-    dict[size++] = INS_PUSH;
-    *(uint32_t*)&dict[size] = rstack[rsp-2];
-    size += 4;
-    dict[size++] = INS_JZ;
-    rstack[rsp-2] = rstack[rsp-1];
-    rsp--;
-}
-
-void wAgain() {
-    dict[size++] = INS_PUSH;
-    *(uint32_t*)&dict[size] = rstack[rsp-2];
-    size += 4;
-    dict[size++] = INS_JMP;
-    rstack[rsp-2] = rstack[rsp-1];
-    rsp--;
-}
-
-void wWhile() {
-    rsp++;
-    rstack[rsp-1] = rstack[rsp-2];
-    dict[size++] = INS_PUSH;
-    rstack[rsp-2] = size;
-    size += 4;
-    dict[size++] = INS_JZ;
-}
-
-void wRepeat() {
-    dict[size++] = INS_PUSH;
-    *(uint32_t*)&dict[size] = rstack[rsp-3];
-    size += 4;
-    dict[size++] = INS_JMP;
-    *(uint32_t*)&dict[rstack[rsp-2]] = size;
-    rstack[rsp-3] = rstack[rsp-1];
-    rsp -= 2;
-}
-
 void wI() {
     stack[sp++] = rstack[rsp-3];
 }
@@ -496,35 +446,18 @@ void wParseName() {
     stack[sp++] = strlen(dict+stringAddr);
 }
 
-void wSQuote() {
-    getNext('"', '"');
-    if(compile) {
-        dict[size++] = INS_PUSH;
-        *(uint32_t*)&dict[size] = stringAddr;
-        size += 4;
-        dict[size++] = INS_PUSH;
-        *(uint32_t*)&dict[size] = strlen(dict+stringAddr);
-        size += 4;
-    } else {
-        stack[sp++] = stringAddr;
-        stack[sp++] = strlen(dict+stringAddr);
-    }
+void wParseRange() {
+    getNext(stack[sp-2], stack[sp-1]);
+    stack[sp-2] = stringAddr;
+    stack[sp-1] = strlen(dict+stringAddr);
+}
+
+void wSaveString() {
     stringAddr += strlen(dict+stringAddr);
 }
 
-void wQuote() {
-    if(compile) {
-        wSQuote();
-        dict[size++] = INS_PUSH;
-        *(uint32_t*)&dict[size] = typeAddr;
-        size += 4;
-        dict[size++] = INS_CALL;
-    } else {
-        getNext('"', '"');
-        stack[sp++] = stringAddr;
-        stack[sp++] = strlen(dict+stringAddr);
-        runAddr(typeAddr);
-    }
+void wQCompile() {
+    stack[sp++] = (compile!=0)*-1;
 }
 
 void wExit() {
@@ -586,12 +519,14 @@ void wDepth() {
     stack[sp] = sp++;
 }
 
-void wTraceOn() {
-    trace = 1;
-}
-
 void wTraceSet() {
     trace = stack[--sp];
+}
+
+void wSkip() {
+    char c;
+    sp--;
+    while((c = getNextC()) && c != stack[sp]);
 }
 
 void run() {
@@ -663,19 +598,13 @@ void init() {
     addFunction("IMMEDIATE", wImmediate);
     addFunction("HERE", wHere);
     addFunction("WORDS", wWords);
-    addFunction("IF", wIf); wImmediate();
-    addFunction("ELSE", wElse); wImmediate();
-    addFunction("THEN", wThen); wImmediate();
-    addFunction("BEGIN", wBegin); wImmediate();
-    addFunction("UNTIL", wUntil); wImmediate();
-    addFunction("AGAIN", wAgain); wImmediate();
-    addFunction("WHILE", wWhile); wImmediate();
-    addFunction("REPEAT", wRepeat); wImmediate();
     addFunction("I", wI);
     addFunction("J", wJ);
     addFunction("PARSE-NAME", wParseName);
-    addFunction(".\"", wQuote); wImmediate();
-    addFunction("S\"", wSQuote); wImmediate();
+    addFunction("PARSE-RANGE", wParseRange);
+    addFunction("SAVE-STRING", wSaveString);
+    addFunction("COMPILE?", wQCompile);
+    addFunction("SKIP", wSkip);
     addFunction("EXIT", wExit); wImmediate();
     addFunction("'", wFind);
     addFunction("LIT,", wAddLit);
