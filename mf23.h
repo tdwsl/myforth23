@@ -79,7 +79,7 @@ const char *bootStr = ""
 "  DUP 0< IF [CHAR] - EMIT INVERT 1+ THEN "
 "  <# BEGIN DUP 0<> WHILE "
 "    BASE @ /MOD SWAP "
-"    DUP 10 < IF [CHAR] 0 + ELSE [CHAR] A + THEN "
+"    DUP 10 < IF [CHAR] 0 + ELSE [CHAR] A 10 - + THEN "
 "    HOLD "
 "  REPEAT DROP #> TYPE SPACE ; "
 "";
