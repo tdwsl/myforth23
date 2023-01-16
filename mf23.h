@@ -32,6 +32,7 @@ const char *insStrs[] = {
 #define STRING_START 14*1024*1024
 
 const char *bootStr = ""
+": = - 0= ; : > - 0> ; : < - 0< ; : >= - 0>= ; : <= - 0<= ; "
 ": ['] ' LIT, ; IMMEDIATE "
 ": [COMPILE] ' LIT, ['] COMPILE, COMPILE, ; IMMEDIATE "
 ": IF R> HERE 1+ >R >R 0 LIT, JZ, ; IMMEDIATE "
@@ -46,21 +47,18 @@ const char *bootStr = ""
 ": CR 10 EMIT ; "
 ": SPACE 32 EMIT ; "
 ": BASE 0 ; " // BASE_INDEX
-": HEX 16 BASE ! ; "
-": DECIMAL 10 BASE ! ; "
+": HEX 16 BASE ! ; : DECIMAL 10 BASE ! ; "
 ": CHAR PARSE-NAME DROP C@ ; "
 ": [CHAR] CHAR LIT, ; IMMEDIATE "
 ": PARSE DUP PARSE-RANGE ; "
 ": S\" [CHAR] \" PARSE SAVE-STRING "
-"  COMPILE? IF SWAP LIT, LIT, THEN ; IMMEDIATE "
+"    COMPILE? IF SWAP LIT, LIT, THEN ; IMMEDIATE "
 ": .\" [CHAR] \" PARSE "
-"  COMPILE? IF SAVE-STRING SWAP LIT, LIT, [COMPILE] TYPE "
-"  ELSE TYPE THEN ; IMMEDIATE "
-": \\ 10 SKIP ; "
-": ( [CHAR] ) SKIP ; "
-": CELL 4 ; "
-": CELL+ 4 + ; "
-": CELLS 4 * ; "
+"    COMPILE? IF SAVE-STRING SWAP LIT, LIT, [COMPILE] TYPE "
+"    ELSE TYPE THEN ; IMMEDIATE "
+": \\ 10 SKIP ; IMMEDIATE "
+": ( [CHAR] ) SKIP ; IMMEDIATE "
+": CELL 4 ; : CELL+ 4 + ; : CELLS 4 * ; "
 ": , HERE ! CELL ALLOT ; "
 ": C, HERE C! 1 ALLOT ; "
 ": VARIABLE CREATE CELL ALLOT ; "
@@ -71,7 +69,19 @@ const char *bootStr = ""
 ": LOOP [COMPILE] (LOOP) R> R> LIT, JZ, "
 "  R> BEGIN DUP WHILE 1- HERE R> ! REPEAT DROP >R "
 "  [COMPILE] (END-LOOP) ; IMMEDIATE "
-": LEAVE R> R> R> 1+ HERE 1+ SWAP >R >R >R >R 0 LIT, JMP, ; IMMEDIATE "
+/*": LEAVE R> R> R> 1+ HERE 1+ >R >R >R >R 0 LIT, JMP, ; IMMEDIATE "*/
+": +! DUP @ ROT + SWAP ! ; "
+"CREATE PIC 30 CELL+ ALLOT "
+": <# 0 PIC ! ; "
+": HOLD 1 PIC +! PIC 30 PIC @ - + C! ; "
+": #> PIC 30 PIC @ - + PIC @ ; "
+": . DUP 0= IF [CHAR] 0 EMIT SPACE EXIT THEN "
+"  DUP 0< IF [CHAR] - EMIT INVERT 1+ THEN "
+"  <# BEGIN DUP 0<> WHILE "
+"    BASE @ /MOD SWAP "
+"    DUP 10 < IF [CHAR] 0 + ELSE [CHAR] A + THEN "
+"    HOLD "
+"  REPEAT DROP #> TYPE SPACE ; "
 "";
 const char *strPtr;
 
@@ -82,8 +92,8 @@ unsigned char initDict[] = {
     '-',0,0,INS_SUB,INS_RET,5,0,
     '*',0,0,INS_MUL,INS_RET,5,0,
     '/','M','O','D',0,0,INS_DIV,INS_RET,8,0,
-    'M','O','D',0,0,INS_DIV,INS_SWAP,INS_DROP,INS_RET,9,0,
-    '/',0,0,INS_DIV,INS_DROP,INS_RET,6,0,
+    'M','O','D',0,0,INS_DIV,INS_DROP,INS_RET,8,0,
+    '/',0,0,INS_DIV,INS_SWAP,INS_DROP,INS_RET,7,0,
     '>','R',0,0,INS_RPOP,INS_SWAP,INS_RPUSH,INS_RPUSH,INS_RET,9,0,
     'R','>',0,0,INS_RPOP,INS_RPOP,INS_SWAP,INS_RPUSH,INS_RET,9,0,
     'S','W','A','P',0,0,INS_SWAP,INS_RET,8,0,
@@ -105,13 +115,11 @@ unsigned char initDict[] = {
     'C','!',0,0,INS_SETC,INS_RET,6,0,
     'C','@',0,0,INS_GETC,INS_RET,6,0,
     '0','<','>',0,0,INS_ZEQ,INS_ZEQ,INS_RET,8,0,
-    '=',0,0,INS_SUB,INS_ZEQ,INS_RET,6,0,
-    '>','=',0,0,INS_SUB,INS_PUSH,0,0,0,8,INS_AND,INS_ZEQ,INS_RET,13,0,
-    '>',0,0,INS_DEC,INS_SUB,INS_PUSH,0,0,0,8,INS_AND,INS_ZEQ,INS_RET,13,0,
-    '<',0,0,INS_SUB,INS_PUSH,0,0,0,8,
-            INS_AND,INS_ZEQ,INS_ZEQ,INS_RET,13,0,
-    '<','=',0,0,INS_INC,INS_SUB,INS_PUSH,0,0,0,8,
-            INS_AND,INS_ZEQ,INS_ZEQ,INS_RET,15,0,
+    '0','<',0,0,INS_PUSH,0,0,0,8,INS_AND,INS_ZEQ,INS_ZEQ,INS_RET,13,0,
+    '0','>','=',0,0,INS_PUSH,0,0,0,8,INS_AND,INS_ZEQ,INS_RET,13,0,
+    '0','<','=',0,0,INS_DEC,INS_PUSH,0,0,0,8,INS_AND,INS_ZEQ,INS_ZEQ,
+                INS_RET,15,0,
+    '0','>',0,0,INS_DEC,INS_PUSH,0,0,0,8,INS_AND,INS_ZEQ,INS_RET,13,0,
     'N','I','P',0,0,INS_SWAP,INS_DROP,INS_RET,8,0,
     '2','D','U','P',0,0,INS_OVER,INS_OVER,INS_RET,9,0,
     '2','O','V','E','R',0,0,INS_PUSH,4,0,0,0,INS_DUP,INS_DEC,INS_PICK,
@@ -342,10 +350,6 @@ int number(const char *s, int32_t *n) {
 
 void wEmit() {
     printf("%c", stack[--sp]);
-}
-
-void wPrint() {
-    printf("%d ", stack[--sp]);
 }
 
 void wColon() {
@@ -591,7 +595,6 @@ void init() {
     lastWord = size - 2;
     stringAddr = STRING_START;
     addFunction("EMIT", wEmit);
-    addFunction(".", wPrint);
     addFunction(":", wColon);
     addFunction(";", wSemi); wImmediate();
     addFunction("BYE", wBye);
