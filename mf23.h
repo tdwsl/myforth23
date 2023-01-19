@@ -32,7 +32,7 @@ const char *insStrs[] = {
 #define STRING_START 14*1024*1024
 
 const char *bootStr = ""
-": = - 0= ; : > - 0> ; : < - 0< ; : >= - 0>= ; : <= - 0<= ; "
+": = - 0= ; : > - 0> ; : < - 0< ; : >= - 0>= ; : <= - 0<= ; : <> - 0= 0= ; "
 ": ['] ' LIT, ; IMMEDIATE "
 ": [COMPILE] ' LIT, ['] COMPILE, COMPILE, ; IMMEDIATE "
 ": IF R> HERE 1+ >R >R 0 LIT, JZ, ; IMMEDIATE "
@@ -52,10 +52,10 @@ const char *bootStr = ""
 ": [CHAR] CHAR LIT, ; IMMEDIATE "
 ": PARSE DUP PARSE-RANGE ; "
 ": S\" [CHAR] \" PARSE SAVE-STRING "
-"    COMPILE? IF SWAP LIT, LIT, THEN ; IMMEDIATE "
+"  COMPILE? IF SWAP LIT, LIT, THEN ; IMMEDIATE "
 ": .\" [CHAR] \" PARSE "
-"    COMPILE? IF SAVE-STRING SWAP LIT, LIT, [COMPILE] TYPE "
-"    ELSE TYPE THEN ; IMMEDIATE "
+"  COMPILE? IF SAVE-STRING SWAP LIT, LIT, [COMPILE] TYPE "
+"  ELSE TYPE THEN ; IMMEDIATE "
 ": \\ 10 SKIP ; IMMEDIATE "
 ": ( [CHAR] ) SKIP ; IMMEDIATE "
 ": CELL 4 ; : CELL+ 4 + ; : CELLS 4 * ; "
@@ -65,16 +65,23 @@ const char *bootStr = ""
 ": (DO) R> ROT ROT >R >R >R ; "
 ": DO [COMPILE] (DO) R> 0 >R HERE >R >R ; IMMEDIATE "
 ": (LOOP) R> R> R> 1+ 2DUP >R >R = SWAP >R ; "
+": (+LOOP) R> R> R> 2DUP > ROT ROT 4 PICK + "
+"  2DUP >R >R > <> SWAP >R SWAP DROP ; "
 ": (END-LOOP) R> R> R> 2DROP >R ; "
-": LOOP [COMPILE] (LOOP) R> R> LIT, JZ, "
-"  R> BEGIN DUP WHILE 1- HERE R> ! REPEAT DROP >R "
+": (RESOLVE-LEAVE) R> SWAP BEGIN DUP WHILE 1- HERE R> ! REPEAT DROP >R ; "
+": LOOP 1 LIT, [COMPILE] (+LOOP) R> R> LIT, JZ, "
+"  R> (RESOLVE-LEAVE) >R "
 "  [COMPILE] (END-LOOP) ; IMMEDIATE "
-/*": LEAVE R> R> R> 1+ HERE 1+ >R >R >R >R 0 LIT, JMP, ; IMMEDIATE "*/
+": +LOOP [COMPILE] (+LOOP) R> R> LIT, JZ, "
+"  R> (RESOLVE-LEAVE) >R "
+"  [COMPILE] (END-LOOP) ; IMMEDIATE "
+": LEAVE R> R> R> R> 1+ HERE 1+ >R >R >R >R >R 0 LIT, JMP, ; IMMEDIATE "
 ": +! DUP @ ROT + SWAP ! ; "
-"CREATE PIC 30 CELL+ ALLOT "
+"160 CONSTANT PICSZ "
+"CREATE PIC PICSZ CELL+ ALLOT "
 ": <# 0 PIC ! ; "
-": HOLD 1 PIC +! PIC 30 PIC @ - + C! ; "
-": #> PIC 30 PIC @ - + PIC @ ; "
+": HOLD 1 PIC +! PIC PICSZ PIC @ - + C! ; "
+": #> PIC PICSZ PIC @ - + PIC @ ; "
 ": . DUP 0= IF [CHAR] 0 EMIT SPACE EXIT THEN "
 "  DUP 0< IF [CHAR] - EMIT INVERT 1+ THEN "
 "  <# BEGIN DUP 0<> WHILE "
@@ -130,7 +137,7 @@ unsigned char initDict[] = {
     255,
 };
 unsigned char dict[16*1024*1024];
-uint32_t size = 0, lastWord = 0, oldSize;
+uint32_t size = 0, lastWord = 0, lastFr = 0, oldSize;
 
 uint32_t rstack[256];
 uint32_t stack[256];
@@ -170,6 +177,7 @@ void endWord() {
     dict[size++] = INS_RET;
     *(uint16_t*)&dict[size] = size - lastWord - 2;
     lastWord = size;
+    lastFr = lastWord;
     size += 2;
 }
 
@@ -290,7 +298,7 @@ void runAddr(uint32_t pc) {
             stack[sp-2] = rstack[rsp];
             break;
         case INS_DROP: sp--; break;
-        case INS_PICK: stack[sp-1] = stack[sp-stack[sp-1]]; break;
+        case INS_PICK: stack[sp-1] = stack[sp-stack[sp-1]-2]; break;
         case INS_RPUSH: rstack[rsp++] = stack[--sp]; break;
         case INS_RPOP: stack[sp++] = rstack[--rsp]; break;
         case INS_CALL: rstack[rsp++] = pc; pc = stack[--sp]; break;
@@ -357,6 +365,12 @@ void wColon() {
     oldSize = size;
     addWord(dict+stringAddr);
     compile = 1;
+}
+
+void wNoname() {
+    oldSize = size;
+    compile = 1;
+    stack[sp++] = size;
 }
 
 void wSemi() {
@@ -593,10 +607,12 @@ void runFile(const char *filename) {
 void init() {
     for(size = 0; initDict[size] != 255; size++) dict[size] = initDict[size];
     lastWord = size - 2;
+    lastFr = lastWord;
     stringAddr = STRING_START;
     addFunction("EMIT", wEmit);
     addFunction(":", wColon);
     addFunction(";", wSemi); wImmediate();
+    addFunction(":NONAME", wNoname); wImmediate();
     addFunction("BYE", wBye);
     addFunction("IMMEDIATE", wImmediate);
     addFunction("HERE", wHere);
