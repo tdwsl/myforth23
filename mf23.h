@@ -78,6 +78,8 @@ const char *bootStr = ""
 ": LEAVE R> R> R> R> 1+ HERE 1+ >R >R >R >R >R 0 LIT, JMP, ; IMMEDIATE "
 ": +! DUP @ ROT + SWAP ! ; "
 ": 2SWAP >R -ROT R> -ROT ; "
+": (TO) 1+ ! ; "
+": TO COMPILE? IF ' LIT, [COMPILE] (TO) ELSE ' (TO) ; IMMEDIATE "
 "160 CONSTANT PICSZ "
 "CREATE PIC PICSZ CELL+ ALLOT "
 ": <# 0 PIC ! ; "
@@ -642,6 +644,7 @@ void init() {
     addFunction("ALLOT", wAllot);
     addFunction("CREATE", wCreate);
     addFunction("CONSTANT", wConstant);
+    addFunction("VALUE", wConstant);
     addFunction("JMP,", wJmp);
     addFunction("JZ,", wJz);
     addFunction("SEE", wSee);
