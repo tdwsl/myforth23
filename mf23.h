@@ -195,7 +195,7 @@ int getNext(int mn, int mx) {
     char *s = dict+stringAddr;
     for(;;) {
         *(s++) = getNextC();
-        if((*(s-1) <= mx && *(s-1) >=mn) || *(s-1) == 0) {
+        if((*(s-1) <= mx && *(s-1) >=mn) || *(s-1) == 0 || *(s-1) == EOF) {
             if(s == dict+stringAddr+1) {
                 if(*(s-1) == 0) return 0;
                 s = dict+stringAddr;
@@ -547,6 +547,13 @@ void wSkip() {
     while((c = getNextC()) && c != stack[sp]);
 }
 
+void runFile(const char *filename);
+
+void wInclude() {
+    getNext(0, 32);
+    runFile(dict+stringAddr);
+}
+
 void run() {
     int i;
     uint32_t addr;
@@ -636,6 +643,7 @@ void init() {
     addFunction("SEE", wSee);
     addFunction("DEPTH", wDepth);
     addFunction("TRACE!", wTraceSet);
+    addFunction("INCLUDE", wInclude);
     /*getNextC = strGetNextC;
     strPtr = bootStr;
     getNextC = defGetNextC;
