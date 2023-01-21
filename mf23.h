@@ -132,6 +132,7 @@ unsigned char initDict[] = {
     '2','O','V','E','R',0,0,INS_PUSH,4,0,0,0,INS_DUP,INS_DEC,INS_PICK,
                         INS_SWAP,INS_PICK,INS_SWAP,INS_RET,19,0,
     'R','O','T',0,0,INS_RPUSH,INS_SWAP,INS_RPOP,INS_SWAP,INS_RET,10,0,
+    '-','R','O','T',0,0,INS_SWAP,INS_RPUSH,INS_SWAP,INS_RPOP,INS_RET,11,0,
     '2','D','R','O','P',0,0,INS_DROP,INS_DROP,INS_RET,10,0,
     'E','X','E','C','U','T','E',0,0,INS_JMP,10,0,
     255,
