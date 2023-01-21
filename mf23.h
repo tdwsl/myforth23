@@ -146,7 +146,8 @@ uint32_t stack[256];
 unsigned char sp = 0, rsp = 0;
 char compile = 0;
 
-FILE *mfFp;
+FILE *mfFp[20];
+FILE **mfFpP = mfFp;
 
 char (*getNextC)();
 void (*functions[3000])();
@@ -166,7 +167,7 @@ char strGetNextC() {
 }
 
 char fGetNextC() {
-    if(feof(mfFp)) return 0; else return fgetc(mfFp);
+    if(feof(*mfFpP)) return 0; else return fgetc(*mfFpP);
 }
 
 void addWord(const char *s) {
@@ -604,13 +605,14 @@ void runStr(const char *s) {
 
 void runFile(const char *filename) {
     char (*old)();
-    mfFp = fopen(filename, "r");
-    if(!mfFp) { printf("failed to open %s\n", filename); return; }
+    *(++mfFpP) = fopen(filename, "r");
+    if(!(*mfFpP)) { printf("failed to open %s\n", filename);
+                   mfFpP--; return; }
     old = getNextC;
     getNextC = fGetNextC;
     run();
     getNextC = old;
-    fclose(mfFp);
+    fclose(*(mfFpP--));
 }
 
 void init() {
